@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import requests
-import time
 from io import BytesIO
 import os
 from datetime import datetime
@@ -12,7 +11,7 @@ import pydeck as pdk
 # ==============================
 
 class BaseGeocodingClient:
-    RATE_LIMIT = 1  # seconds between requests
+    RATE_LIMIT = 1
     def reverse_geocode(self, lat, lon, log_callback=None):
         raise NotImplementedError("This method should be implemented by subclasses.")
 
@@ -110,7 +109,7 @@ def get_client(provider, api_key=None):
 # ==============================
 
 def get_api_key_from_env(provider):
-    key_map = {"LocationIQ": "LOCATIONIQ_API_KEY", "Google Maps": "GOOGLE_MAPS_API_KEY"}
+    key_map = {"LocationIQ":"LOCATIONIQ_API_KEY","Google Maps":"GOOGLE_MAPS_API_KEY"}
     env_var = key_map.get(provider)
     return os.environ.get(env_var) if env_var else None
 
@@ -192,8 +191,7 @@ if uploaded_file:
     col1, col2, col3 = st.columns(3)
     with col1: lat_col = st.selectbox("Latitude Column", df.columns, index=list(df.columns).index(lat_col) if lat_col else 0)
     with col2: lon_col = st.selectbox("Longitude Column", df.columns, index=list(df.columns).index(lon_col) if lon_col else 0)
-    with col3:
-        id_col = st.selectbox("Unique ID Column", df.columns)
+    with col3: id_col = st.selectbox("Unique ID Column", df.columns)
 
     stat_col = st.selectbox("Statistics Column", df.columns, index=list(df.columns).index("Statistics") if "Statistics" in df.columns else 0)
 
@@ -230,4 +228,27 @@ if uploaded_file:
         with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer: result_df.to_excel(writer,index=False)
         excel_buffer.seek(0)
         st.download_button("📥 Download Excel", excel_buffer, file_name=f"{generate_unique_filename()}.xlsx")
-        st.download_button("
+        st.download_button("📥 Download CSV", result_df.to_csv(index=False), file_name=f"{generate_unique_filename()}.csv")
+
+        # Summary by state
+        st.subheader("📈 Summary by State")
+        st.dataframe(result_df.groupby('State')[id_col].count().reset_index().rename(columns={id_col:'Count'}))
+
+        # Map view option
+        if st.checkbox("🗺️ View on Map"):
+            color_map = {'stopped':[255,0,0],'moving':[0,255,0],'idle':[0,0,255]}
+            result_df['color'] = result_df[stat_col].map(color_map).apply(lambda x: x if isinstance(x,list) else [128,128,128])
+            st.pydeck_chart(pdk.Deck(
+                initial_view_state=pdk.ViewState(latitude=result_df['Latitude'].mean(),
+                                                 longitude=result_df['Longitude'].mean(),
+                                                 zoom=5, pitch=0),
+                layers=[pdk.Layer(
+                    "ScatterplotLayer",
+                    data=result_df,
+                    get_position='[Longitude, Latitude]',
+                    get_color='color',
+                    get_radius=500,
+                    pickable=True,
+                    tooltip="{"+f"{id_col}, {stat_col}, State, Full Address"+"}"
+                )]
+            ))
