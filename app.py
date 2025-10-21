@@ -174,6 +174,18 @@ if uploaded_file:
     df_filtered = df[df["State"].isin(selected_states)]
 
     # ============================================
+    # DOWNLOAD FILTERED DATA
+    # ============================================
+    def get_excel_download(df_to_download):
+        output = BytesIO()
+        df_to_download.to_excel(output, index=False)
+        processed_data = output.getvalue()
+        b64 = base64.b64encode(processed_data).decode()
+        return f'<a href="data:application/octet-stream;base64,{b64}" download="filtered_vehicles.xlsx">💾 Download Filtered Data</a>'
+
+    st.markdown(get_excel_download(df_filtered), unsafe_allow_html=True)
+
+    # ============================================
     # CHARTS
     # ============================================
     st.markdown("### 🚚 Trucks by State")
@@ -182,7 +194,7 @@ if uploaded_file:
     st.bar_chart(data=counts.set_index("State"))
 
     # ============================================
-    # MAP VIEW (Highlight Popups with Driver Info)
+    # MAP VIEW (Highlight Popups with Driver Info & Legend)
     # ============================================
     st.markdown("---")
     st.markdown("### 🗺️ Fleet Map View (Highlight Popups)")
@@ -214,5 +226,20 @@ if uploaded_file:
                 popup=folium.Popup(popup_html, max_width=250)
             ).add_to(cluster)
 
+        # Legend
+        legend_html = """
+         <div style="position: fixed; 
+                     bottom: 50px; left: 50px; width: 150px; height: 70px; 
+                     border:2px solid grey; z-index:9999; font-size:14px;
+                     background-color:white; padding: 10px;">
+         <b>Legend</b><br>
+         <i style="color:green;">●</i> Reporting<br>
+         <i style="color:red;">●</i> Not Reporting
+         </div>
+         """
+        m.get_root().html.add_child(folium.Element(legend_html))
+
         st_folium(m, width=1000, height=550)
-        st.caption("Green = Reporting |
+        st.caption("Map popups show Truck, Driver, Phone, and decoded address. Marker color = reporting status.")
+    else:
+        st.warning("No coordinates available for map view.")
