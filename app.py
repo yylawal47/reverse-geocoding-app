@@ -5,23 +5,21 @@ import os
 from io import BytesIO
 from datetime import datetime
 import pydeck as pdk
+import time
 
 # ==============================
 # API CLIENTS
 # ==============================
 
 class BaseGeocodingClient:
-    RATE_LIMIT = 1  # seconds between requests
-
+    RATE_LIMIT = 1
     def reverse_geocode(self, lat, lon, log_callback=None):
         raise NotImplementedError
 
 class LocationIQClient(BaseGeocodingClient):
     RATE_LIMIT = 1
-
     def __init__(self, api_key):
         self.api_key = api_key
-
     def reverse_geocode(self, lat, lon, log_callback=None):
         url = f"https://us1.locationiq.com/v1/reverse.php?key={self.api_key}&lat={lat}&lon={lon}&format=json"
         try:
@@ -47,7 +45,6 @@ class LocationIQClient(BaseGeocodingClient):
 
 class OpenStreetMapClient(BaseGeocodingClient):
     RATE_LIMIT = 1
-
     def reverse_geocode(self, lat, lon, log_callback=None):
         url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json"
         headers = {'User-Agent': 'streamlit-geocoder-app'}
@@ -81,7 +78,7 @@ def get_client(provider, api_key=None):
         raise ValueError(f"Unsupported provider: {provider}")
 
 # ==============================
-# UTILITY FUNCTIONS
+# UTILS
 # ==============================
 
 def get_api_key_from_env(provider):
@@ -134,6 +131,7 @@ except Exception as e:
     st.sidebar.error(f"API client error: {e}")
 
 uploaded_file = st.sidebar.file_uploader("Upload Excel or CSV", type=["xlsx", "csv"])
+
 if uploaded_file:
     df = load_file(uploaded_file)
     lat_col, lon_col = find_coordinate_columns(df)
@@ -144,23 +142,47 @@ if uploaded_file:
     st.subheader("Data Preview")
     st.dataframe(df.head())
 
-    st.sidebar.header("Filters")
-    unique_stats = df[stat_col].dropna().unique().tolist()
-    selected_stats = st.sidebar.multiselect("Filter Statistics", unique_stats, default=unique_stats)
-    filtered_df = df[df[stat_col].isin(selected_stats)]
+    if st.button("🚀 Start Reverse Geocoding"):
+        processed = []
+        log_text = st.empty()
+        for idx, row in df.iterrows():
+            lat, lon = row[lat_col], row[lon_col]
+            if validate_coordinate_values(lat, lon):
+                result = st.session_state.api_client.reverse_geocode(lat, lon)
+                if result:
+                    combined = row.to_dict()
+                    combined.update(result)
+                    processed.append(combined)
+                else:
+                    combined = row.to_dict()
+                    combined.update({'Street1':'','Street2':'','City':'','State':'','Postal Code':'','Country':'','Full Address':'Error'})
+                    processed.append(combined)
+            else:
+                combined = row.to_dict()
+                combined.update({'Street1':'','Street2':'','City':'','State':'','Postal Code':'','Country':'','Full Address':'Invalid'})
+                processed.append(combined)
+            if idx % 10 == 0:
+                log_text.text(f"Processing row {idx+1}/{len(df)}")
+            time.sleep(0.5)  # rate-limit
+        geocoded_df = pd.DataFrame(processed)
+        st.session_state.geocoded_df = geocoded_df
+        st.success("✅ Reverse Geocoding Complete!")
+        st.dataframe(geocoded_df.head())
 
-    if st.button("🚀 Show Map"):
+    if 'geocoded_df' in st.session_state:
+        st.sidebar.header("Filters")
+        unique_stats = st.session_state.geocoded_df[stat_col].dropna().unique().tolist()
+        selected_stats = st.sidebar.multiselect("Filter Statistics", unique_stats, default=unique_stats)
+        filtered_df = st.session_state.geocoded_df[st.session_state.geocoded_df[stat_col].isin(selected_stats)]
+
+        st.header("📍 Map View")
         filtered_df = filtered_df.dropna(subset=[lat_col, lon_col])
         filtered_df = filtered_df.copy()
         filtered_df['Latitude'] = filtered_df[lat_col].astype(float)
         filtered_df['Longitude'] = filtered_df[lon_col].astype(float)
-
-        # Color mapping
         color_map = {"Stopped":[200,0,0,180],"Moving":[0,200,0,180],"Idle":[255,215,0,180]}
         filtered_df['color'] = filtered_df[stat_col].map(lambda x: color_map.get(x,[128,128,128,180]))
-
         tooltip_html = "<br>".join([f"<b>{c}:</b> {{{c}}}" for c in filtered_df.columns if c not in ['color','Latitude','Longitude']])
-
         layer = pdk.Layer(
             "ScatterplotLayer",
             data=filtered_df,
@@ -169,14 +191,12 @@ if uploaded_file:
             get_radius=200,
             pickable=True
         )
-
         view_state = pdk.ViewState(
             longitude=filtered_df["Longitude"].mean(),
             latitude=filtered_df["Latitude"].mean(),
             zoom=6,
             pitch=0
         )
-
         r = pdk.Deck(
             layers=[layer],
             initial_view_state=view_state,
@@ -184,7 +204,7 @@ if uploaded_file:
         )
         st.pydeck_chart(r)
 
-        # Export filtered data
+        # Export filtered
         excel_buffer = BytesIO()
         with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
             filtered_df.to_excel(writer, index=False, sheet_name="Filtered Data")
