@@ -13,13 +13,11 @@ import pydeck as pdk
 
 class BaseGeocodingClient:
     RATE_LIMIT = 1
-
     def reverse_geocode(self, lat, lon, log_callback=None):
-        raise NotImplementedError
+        raise NotImplementedError("This method should be implemented by subclasses.")
 
 class LocationIQClient(BaseGeocodingClient):
     RATE_LIMIT = 1
-
     def __init__(self, api_key):
         self.api_key = api_key
 
@@ -40,17 +38,14 @@ class LocationIQClient(BaseGeocodingClient):
                     'address': data.get('display_name', '')
                 }
             else:
-                if log_callback:
-                    log_callback(f"❌ LocationIQ API returned status {resp.status_code}")
+                if log_callback: log_callback(f"❌ LocationIQ API returned status {resp.status_code}")
                 return None
         except Exception as e:
-            if log_callback:
-                log_callback(f"❌ LocationIQ API error: {str(e)}")
+            if log_callback: log_callback(f"❌ LocationIQ API error: {str(e)}")
             return None
 
 class GoogleMapsClient(BaseGeocodingClient):
     RATE_LIMIT = 1
-
     def __init__(self, api_key):
         self.api_key = api_key
 
@@ -74,17 +69,14 @@ class GoogleMapsClient(BaseGeocodingClient):
                     }
                 return None
             else:
-                if log_callback:
-                    log_callback(f"❌ Google Maps API returned status {resp.status_code}")
+                if log_callback: log_callback(f"❌ Google Maps API returned status {resp.status_code}")
                 return None
         except Exception as e:
-            if log_callback:
-                log_callback(f"❌ Google Maps API error: {str(e)}")
+            if log_callback: log_callback(f"❌ Google Maps API error: {str(e)}")
             return None
 
 class OpenStreetMapClient(BaseGeocodingClient):
     RATE_LIMIT = 1
-
     def reverse_geocode(self, lat, lon, log_callback=None):
         url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json"
         headers = {'User-Agent': 'streamlit-geocoder-app'}
@@ -103,12 +95,10 @@ class OpenStreetMapClient(BaseGeocodingClient):
                     'address': data.get('display_name', '')
                 }
             else:
-                if log_callback:
-                    log_callback(f"❌ OpenStreetMap API returned status {resp.status_code}")
+                if log_callback: log_callback(f"❌ OpenStreetMap API returned status {resp.status_code}")
                 return None
         except Exception as e:
-            if log_callback:
-                log_callback(f"❌ OpenStreetMap API error: {str(e)}")
+            if log_callback: log_callback(f"❌ OpenStreetMap API error: {str(e)}")
             return None
 
 def get_client(provider, api_key=None):
@@ -126,10 +116,7 @@ def get_client(provider, api_key=None):
 # ==============================
 
 def get_api_key_from_env(provider):
-    key_map = {
-        "LocationIQ": "LOCATIONIQ_API_KEY",
-        "Google Maps": "GOOGLE_MAPS_API_KEY"
-    }
+    key_map = {"LocationIQ": "LOCATIONIQ_API_KEY", "Google Maps": "GOOGLE_MAPS_API_KEY"}
     env_var = key_map.get(provider)
     return os.environ.get(env_var) if env_var else None
 
@@ -137,49 +124,49 @@ def load_file(uploaded_file):
     filename = uploaded_file.name
     if filename.endswith('.xlsx'):
         xls = pd.ExcelFile(uploaded_file)
-        df = pd.read_excel(xls, sheet_name=xls.sheet_names[0])
+        sheets = xls.sheet_names
+        df = pd.read_excel(xls, sheet_name=sheets[0])
     elif filename.endswith('.csv'):
         df = pd.read_csv(uploaded_file)
+        sheets = ['Sheet1']
     else:
         raise ValueError("Unsupported file type")
-    return df
+    return df, sheets
 
 def find_coordinate_columns(df):
     lat_col = next((c for c in df.columns if 'lat' in c.lower()), None)
     lon_col = next((c for c in df.columns if 'lon' in c.lower() or 'lng' in c.lower()), None)
     return lat_col, lon_col
 
-def validate_coordinate_values(lat, lon):
-    try:
-        lat = float(lat)
-        lon = float(lon)
-        if -90 <= lat <= 90 and -180 <= lon <= 180:
-            return True, 'Valid'
-        return False, 'Out of range'
-    except Exception:
-        return False, 'Invalid'
+def validate_coordinates(df, lat_col, lon_col):
+    valid = df[lat_col].notna() & df[lon_col].notna()
+    return valid.sum()
 
 def initialize_processed_data():
-    return {
-        'Latitude': [], 'Longitude': [], 'Street1': [], 'Street2': [], 'City': [],
-        'State': [], 'Postal Code': [], 'Country': [], 'Full Address': [], 'Status': []
-    }
+    return {'Latitude': [], 'Longitude': [], 'Street1': [], 'Street2': [], 'City': [], 'State': [], 'Postal Code': [], 'Country': [], 'Full Address': [], 'Status': []}
 
 def get_error_record():
-    return {'Street1':'','Street2':'','City':'','State':'Not Available',
-            'Postal Code':'','Country':'','Full Address':'','Status':'Error'}
+    return {'Street1': '', 'Street2': '', 'City': '', 'State': 'Not Available', 'Postal Code': '', 'Country': '', 'Full Address': '', 'Status': 'Error'}
 
 def get_coordinate_error_record(reason='Invalid'):
-    return {'Street1':'','Street2':'','City':'','State':'Not Available',
-            'Postal Code':'','Country':'','Full Address':'','Status':reason}
+    return {'Street1': '', 'Street2': '', 'City': '', 'State': 'Not Available', 'Postal Code': '', 'Country': '', 'Full Address': '', 'Status': reason}
+
+def validate_coordinate_values(lat, lon):
+    try:
+        lat, lon = float(lat), float(lon)
+        return (-90 <= lat <= 90 and -180 <= lon <= 180), 'Valid' if (-90 <= lat <= 90 and -180 <= lon <= 180) else 'Out of range'
+    except: return False, 'Invalid'
 
 def prepare_output_dataframe(df, processed_data, id_col, lat_col, lon_col):
     result_df = pd.DataFrame(processed_data)
     result_df.insert(0, id_col, df[id_col])
     result_df.insert(1, lat_col, df[lat_col])
     result_df.insert(2, lon_col, df[lon_col])
-    result_df.rename(columns={'Status':'Geocoding Status'}, inplace=True)
-    return pd.concat([df, result_df.drop(columns=[lat_col, lon_col])], axis=1)
+    # Merge with all original columns for hover
+    combined_df = pd.concat([df.reset_index(drop=True), result_df.drop([lat_col, lon_col], axis=1)], axis=1)
+    # Ensure unique columns
+    combined_df = combined_df.loc[:, ~combined_df.columns.duplicated()]
+    return combined_df
 
 def generate_unique_filename():
     return f"geocoded_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -188,91 +175,60 @@ def generate_unique_filename():
 # STREAMLIT APP
 # ==============================
 
-st.set_page_config(page_title="🗺️ Geocoding Dashboard", page_icon="🗺️", layout="wide")
+st.set_page_config(page_title="🗺️ Geocoding & Map Dashboard", layout="wide")
 
 st.title("🗺️ Geocoding & Map Dashboard")
+st.markdown("Convert latitude/longitude to addresses and visualize on map.")
 
 # Session state
-if "df" not in st.session_state: st.session_state.df = None
-if "processed_df" not in st.session_state: st.session_state.processed_df = None
-if "logs" not in st.session_state: st.session_state.logs = []
-if "api_client" not in st.session_state: st.session_state.api_client = None
-if "api_provider" not in st.session_state: st.session_state.api_provider = None
+for key in ["df","processed_df","logs","api_client","api_provider"]: 
+    if key not in st.session_state: st.session_state[key] = None
 
 # Sidebar
 st.sidebar.header("⚙️ Configuration")
-api_provider = st.sidebar.radio("🗺️ Select Geocoding Provider",
-                                options=["LocationIQ","Google Maps","OpenStreetMap (Nominatim)"])
+api_provider = st.sidebar.radio("Select Provider", ["LocationIQ","Google Maps","OpenStreetMap (Nominatim)"])
 st.session_state.api_provider = api_provider
 env_api_key = get_api_key_from_env(api_provider)
 if api_provider in ["LocationIQ","Google Maps"]:
     if env_api_key:
-        st.sidebar.success(f"✅ {api_provider} API key loaded")
         api_key = env_api_key
     else:
-        api_key = st.sidebar.text_input(f"🔑 {api_provider} API Key", type="password")
-        if not api_key: st.sidebar.warning(f"⚠️ Provide API key")
+        api_key = st.sidebar.text_input(f"API Key for {api_provider}", type="password")
 else:
     api_key = None
-    st.sidebar.info("ℹ️ OpenStreetMap requires no API key")
 
-try:
-    if api_key or api_provider=="OpenStreetMap (Nominatim)":
-        st.session_state.api_client = get_client(api_provider, api_key)
-except Exception as e:
-    st.sidebar.error(f"❌ API client error: {str(e)}")
+# Initialize client
+if api_key or api_provider=="OpenStreetMap (Nominatim)":
+    st.session_state.api_client = get_client(api_provider, api_key)
 
 # File upload
-st.sidebar.header("📤 Upload File")
 uploaded_file = st.sidebar.file_uploader("Upload Excel or CSV", type=["xlsx","csv"])
-
-# ==============================
-# Main
-# ==============================
-
 if uploaded_file:
     try:
-        df = load_file(uploaded_file)
+        df, sheets = load_file(uploaded_file)
         st.session_state.df = df
     except Exception as e:
-        st.error(f"❌ Error loading file: {str(e)}")
+        st.error(f"Error loading file: {str(e)}")
         st.stop()
 
-    st.markdown("### 📊 File Preview")
+    st.markdown("### File Preview")
     st.dataframe(df.head())
 
     lat_col, lon_col = find_coordinate_columns(df)
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        lat_col = st.selectbox("Latitude Column", df.columns, index=df.columns.get_loc(lat_col) if lat_col else 0)
-    with col2:
-        lon_col = st.selectbox("Longitude Column", df.columns, index=df.columns.get_loc(lon_col) if lon_col else 1)
-    with col3:
-        remaining_cols = [c for c in df.columns if c not in [lat_col, lon_col]]
-        id_col = st.selectbox("Unique ID Column", remaining_cols)
+    remaining_cols = [c for c in df.columns if c not in [lat_col, lon_col]]
+    id_col = st.selectbox("Select Unique ID Column", remaining_cols)
+    stat_col = st.selectbox("Select Statistics Column", remaining_cols)
 
-    stat_col = st.selectbox("Statistics Column", df.columns, index=df.columns.get_loc("Statistics") if "Statistics" in df.columns else 0)
-
-    if st.button("🚀 Start Geocoding"):
-        if api_provider in ["LocationIQ","Google Maps"] and not api_key:
-            st.error("❌ Provide API key"); st.stop()
-        if not st.session_state.api_client:
-            st.error("❌ API client not initialized"); st.stop()
-
+    if st.button("Start Geocoding"):
         processed_data = initialize_processed_data()
-        logs = []
-
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-
-        for idx, row in df.iterrows():
-            lat = row[lat_col]; lon = row[lon_col]
-            is_valid, status = validate_coordinate_values(lat, lon)
+        for idx,row in df.iterrows():
+            lat, lon = row[lat_col], row[lon_col]
+            is_valid,status = validate_coordinate_values(lat, lon)
             if not is_valid:
                 err = get_coordinate_error_record(status)
                 for k,v in err.items(): processed_data[k].append(v)
             else:
-                result = st.session_state.api_client.reverse_geocode(lat, lon, lambda msg: logs.append(msg))
+                result = st.session_state.api_client.reverse_geocode(lat, lon)
                 if result:
                     for k in ['street1','street2','city','state','postal','country','address']:
                         processed_data_key = {'street1':'Street1','street2':'Street2','city':'City','state':'State',
@@ -284,69 +240,45 @@ if uploaded_file:
                 else:
                     err = get_error_record()
                     for k,v in err.items(): processed_data[k].append(v)
-
-            progress_bar.progress((idx+1)/len(df))
-            status_text.text(f"Processing {idx+1}/{len(df)}")
-
         result_df = prepare_output_dataframe(df, processed_data, id_col, lat_col, lon_col)
         st.session_state.processed_df = result_df
-        st.success("🎉 Geocoding Complete!")
+        st.success("Geocoding Complete!")
         st.dataframe(result_df.head())
 
-        # =======================
-        # Filter by Statistics
-        # =======================
-        unique_stats = result_df[stat_col].dropna().unique().tolist()
-        selected_stats = st.multiselect("Filter Statistics", options=unique_stats, default=unique_stats)
-        filtered_df = result_df[result_df[stat_col].isin(selected_stats)]
+        # Filter map by statistics
+        filter_stats = st.multiselect("Filter by Statistics", options=result_df[stat_col].unique(), default=result_df[stat_col].unique())
+        filtered_df = result_df[result_df[stat_col].isin(filter_stats)]
+        filtered_df = filtered_df.loc[:, ~filtered_df.columns.duplicated()]
 
-        # =======================
         # Pydeck Map
-        # =======================
         if not filtered_df.empty:
-            # Ensure floats
-            filtered_df['Latitude'] = filtered_df[lat_col].astype(float)
-            filtered_df['Longitude'] = filtered_df[lon_col].astype(float)
-            color_map = {"Stopped":[200,0,0,180], "Moving":[0,200,0,180], "Idle":[255,215,0,180]}
-            filtered_df['color'] = filtered_df[stat_col].map(lambda x: color_map.get(x, [128,128,128,180]))
+            st.subheader("Map View")
+            color_map = {"stopped":[255,0,0], "moving":[0,255,0], "idle":[255,255,0]}
+            filtered_df['color'] = filtered_df[stat_col].map(lambda x: color_map.get(str(x).lower(), [0,0,255]))
+            st.pydeck_chart(pdk.Deck(
+                initial_view_state=pdk.ViewState(
+                    latitude=filtered_df['Latitude'].mean(),
+                    longitude=filtered_df['Longitude'].mean(),
+                    zoom=6,
+                    pitch=0
+                ),
+                layers=[pdk.Layer(
+                    "ScatterplotLayer",
+                    data=filtered_df,
+                    get_position='[Longitude, Latitude]',
+                    get_color='color',
+                    get_radius=5000,
+                    pickable=True,
+                )],
+                tooltip={"text": "{id_col}\n{stat_col}\n{Full Address}"}
+            ))
 
-            tooltip_cols = [c for c in filtered_df.columns if c not in ['Latitude','Longitude','color']]
-            tooltip = {c: True for c in tooltip_cols}
-
-            layer = pdk.Layer(
-                "ScatterplotLayer",
-                data=filtered_df,
-                get_position=["Longitude","Latitude"],
-                get_fill_color="color",
-                get_radius=200,
-                pickable=True
-            )
-
-            view_state = pdk.ViewState(
-                longitude=float(filtered_df["Longitude"].mean()),
-                latitude=float(filtered_df["Latitude"].mean()),
-                zoom=6,
-                pitch=0
-            )
-
-            r = pdk.Deck(
-                layers=[layer],
-                initial_view_state=view_state,
-                tooltip={"html": "<br>".join([f"<b>{c}:</b> {{{c}}}" for c in tooltip_cols])}
-            )
-            st.pydeck_chart(r)
-        else:
-            st.warning("No rows match the selected statistics filter.")
-
-        # =======================
         # Export
-        # =======================
         excel_buffer = BytesIO()
         with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-            filtered_df.to_excel(writer, index=False, sheet_name="Filtered Data")
+            result_df.to_excel(writer, index=False, sheet_name="Geocoded Data")
         excel_buffer.seek(0)
-        st.download_button("📥 Download Filtered Excel", excel_buffer, file_name=f"{generate_unique_filename()}.xlsx")
-        st.download_button("📥 Download Filtered CSV", filtered_df.to_csv(index=False), file_name=f"{generate_unique_filename()}.csv")
-
+        st.download_button("Download Excel", excel_buffer, file_name=f"{generate_unique_filename()}.xlsx")
+        st.download_button("Download CSV", result_df.to_csv(index=False), file_name=f"{generate_unique_filename()}.csv")
 else:
-    st.info("👈 Upload Excel or CSV file to start")
+    st.info("Upload a file to get started.")
