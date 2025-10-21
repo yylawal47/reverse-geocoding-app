@@ -59,21 +59,35 @@ def geocode_location(lat, lon, provider="Nominatim (Free)", key=None):
             res = requests.get(url, headers={'User-Agent': 'FleetApp'}, timeout=15).json()
             address = res.get("address", {})
             sleep(0.85)
-            return {
-                "State": address.get("state") or address.get("region") or address.get("county") or "Unavailable",
-                "City": address.get("city") or address.get("town") or address.get("village") or "Unavailable",
-                "Postal": address.get("postcode", "Unavailable")
-            }
+
+            # Improved extraction for Nigerian addresses
+            state = (
+                address.get("state") or
+                address.get("region") or
+                address.get("state_district") or
+                address.get("county") or
+                "Unavailable"
+            )
+            city = (
+                address.get("city") or
+                address.get("town") or
+                address.get("village") or
+                address.get("municipality") or
+                "Unavailable"
+            )
+            postal = address.get("postcode", "Unavailable")
+            return {"State": state, "City": city, "Postal": postal}
+
         elif provider == "OpenCage" and key:
             url = f"https://api.opencagedata.com/geocode/v1/json?q={lat}+{lon}&key={key}"
             res = requests.get(url).json()
             if res["results"]:
                 comp = res["results"][0]["components"]
-                return {
-                    "State": comp.get("state", "Unavailable"),
-                    "City": comp.get("city", comp.get("town", comp.get("village", "Unavailable"))),
-                    "Postal": comp.get("postcode", "Unavailable")
-                }
+                state = comp.get("state", "Unavailable")
+                city = comp.get("city", comp.get("town", comp.get("village", "Unavailable")))
+                postal = comp.get("postcode", "Unavailable")
+                return {"State": state, "City": city, "Postal": postal}
+
         elif provider == "Google Maps" and key:
             url = f"https://maps.googleapis.com/maps/api/geocode/json?latlng={lat},{lon}&key={key}"
             res = requests.get(url).json()
@@ -88,6 +102,7 @@ def geocode_location(lat, lon, provider="Nominatim (Free)", key=None):
                     elif "postal_code" in c["types"]:
                         postal = c["long_name"]
                 return {"State": state, "City": city, "Postal": postal}
+
     except:
         pass
     return {"State": "Unavailable", "City": "Unavailable", "Postal": "Unavailable"}
@@ -104,6 +119,10 @@ if uploaded_file:
     lon_col = st.sidebar.selectbox("Longitude Column", df.columns)
     date_col = st.sidebar.selectbox("Date Column", df.columns)
 
+    # Optional driver info columns
+    driver_col = st.sidebar.selectbox("Driver Column (Optional)", [None]+list(df.columns))
+    phone_col = st.sidebar.selectbox("Phone Column (Optional)", [None]+list(df.columns))
+
     st.info("Processing geocoding... please wait if many coordinates are present.")
 
     # Track unique coordinates
@@ -116,7 +135,6 @@ if uploaded_file:
         lat, lon = row[lat_col], row[lon_col]
         key_tuple = (lat, lon)
 
-        # Check session cache
         cached = st.session_state.get("geo_cache", {})
         if key_tuple in cached:
             cache_stats["cache_hits"] += 1
@@ -164,10 +182,10 @@ if uploaded_file:
     st.bar_chart(data=counts.set_index("State"))
 
     # ============================================
-    # MAP VIEW (CLEAN POPUPS)
+    # MAP VIEW (Highlight Popups with Driver Info)
     # ============================================
     st.markdown("---")
-    st.markdown("### 🗺️ Fleet Map View (Clean Popups)")
+    st.markdown("### 🗺️ Fleet Map View (Highlight Popups)")
 
     valid_coords = df_filtered.dropna(subset=[lat_col, lon_col])
     if len(valid_coords) > 0:
@@ -176,38 +194,25 @@ if uploaded_file:
         cluster = MarkerCluster().add_to(m)
 
         for _, row in valid_coords.iterrows():
-            popup_html = f"""
-                <b>Truck:</b> {row[truck_col]}<br>
-                <b>State:</b> {row['State']}<br>
-                <b>City:</b> {row['City']}<br>
-                <b>Postal:</b> {row['Postal']}
-            """
+            popup_html = f"<b>Truck:</b> {row[truck_col]}<br>"
+            if driver_col and row.get(driver_col) is not None:
+                popup_html += f"<b>Driver:</b> {row[driver_col]}<br>"
+            if phone_col and row.get(phone_col) is not None:
+                popup_html += f"<b>Phone:</b> {row[phone_col]}<br>"
+            popup_html += f"<b>State:</b> {row['State']}<br>"
+            popup_html += f"<b>City:</b> {row['City']}<br>"
+            popup_html += f"<b>Postal:</b> {row['Postal']}"
+
+            color = "green" if row.get("Status") == "Reporting" else "red"
+
             folium.CircleMarker(
                 [row[lat_col], row[lon_col]],
                 radius=6,
-                color="blue",
+                color=color,
                 fill=True,
-                fill_color="blue",
+                fill_color=color,
                 popup=folium.Popup(popup_html, max_width=250)
             ).add_to(cluster)
 
         st_folium(m, width=1000, height=550)
-        st.caption("Map shows only Truck Name + decoded address")
-    else:
-        st.warning("No coordinates available for map view.")
-
-    # ============================================
-    # EXPORT FILTERED DATA
-    # ============================================
-    st.markdown("---")
-    st.subheader("📁 Export Filtered Results")
-
-    buffer = BytesIO()
-    df_filtered.to_excel(buffer, index=False)
-    buffer.seek(0)
-    b64 = base64.b64encode(buffer.read()).decode()
-    href = f'<a href="data:application/octet-stream;base64,{b64}" download="Filtered_Vehicles.xlsx">📥 Download Filtered Excel</a>'
-    st.markdown(href, unsafe_allow_html=True)
-
-else:
-    st.info("👆 Upload an Excel file to begin.")
+        st.caption("Green = Reporting |
