@@ -80,6 +80,7 @@ if uploaded_file:
     st.subheader("📍 Map View")
     st.markdown("Hover over points to see full row data.")
     map_df = df_valid.copy()
+    
     # Prepare hover text with all columns
     hover_cols = df_valid.columns.tolist()
     map_df['hover'] = map_df.apply(lambda x: '<br>'.join([f"{col}: {x[col]}" for col in hover_cols]), axis=1)
