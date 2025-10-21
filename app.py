@@ -1,91 +1,202 @@
 import streamlit as st
 import pandas as pd
 import requests
+import folium
+from folium.plugins import MarkerCluster
+from streamlit_folium import st_folium
+from datetime import datetime
+from io import BytesIO
+import base64
 from time import sleep
-import io
 
-st.set_page_config(page_title="Reverse Geocoding App", layout="wide")
+# ============================================
+# APP CONFIGURATION
+# ============================================
+st.set_page_config(page_title="Fleet Geolocation Dashboard", layout="wide")
 
-st.title("🌍 Reverse Geocoding App")
-st.write("Upload an Excel file with latitude and longitude columns to get readable location names.")
+st.title("🚛 Fleet Geolocation Dashboard")
+st.markdown("A smart, interactive dashboard for monitoring vehicle movement and reverse geocoding locations.")
 
-# === File uploader ===
-uploaded_file = st.file_uploader("📂 Upload your Excel file", type=["xlsx"])
+# Dark / Light theme toggle
+theme = st.radio("🌓 Choose Theme", ["Light Mode", "Dark Mode"], horizontal=True)
+if theme == "Dark Mode":
+    st.markdown(
+        """
+        <style>
+        body, .stApp {background-color: #0e1117; color: #e0e0e0;}
+        .stButton>button {background-color: #262730; color: white; border-radius: 10px;}
+        .stSelectbox, .stTextInput, .stMultiSelect {background-color: #262730 !important;}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
-if uploaded_file is not None:
+# ============================================
+# FILE UPLOAD
+# ============================================
+st.sidebar.header("📂 Upload Vehicle Data File")
+uploaded_file = st.sidebar.file_uploader("Upload Excel File", type=["xlsx"])
+
+# ============================================
+# GEOCODING PROVIDER SELECTION
+# ============================================
+api_option = st.sidebar.selectbox(
+    "🌍 Choose Geocoding Provider",
+    ["Nominatim (Free)", "OpenCage", "Google Maps"]
+)
+api_key = ""
+if api_option in ["OpenCage", "Google Maps"]:
+    api_key = st.sidebar.text_input("🔑 Enter API Key")
+
+# ============================================
+# GEOCODING FUNCTION WITH CACHE
+# ============================================
+@st.cache_data(show_spinner=False)
+def geocode_location(lat, lon, provider="Nominatim (Free)", key=None):
+    if pd.isna(lat) or pd.isna(lon):
+        return {"State": "Unavailable", "City": "Unavailable", "Postal": "Unavailable"}
+
+    try:
+        if provider == "Nominatim (Free)":
+            url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json"
+            res = requests.get(url, headers={'User-Agent': 'FleetApp'}).json()
+            address = res.get("address", {})
+            sleep(0.85)
+            return {
+                "State": address.get("state", "Unavailable"),
+                "City": address.get("city", address.get("town", "Unavailable")),
+                "Postal": address.get("postcode", "Unavailable")
+            }
+
+        elif provider == "OpenCage" and key:
+            url = f"https://api.opencagedata.com/geocode/v1/json?q={lat}+{lon}&key={key}"
+            res = requests.get(url).json()
+            if res["results"]:
+                comp = res["results"][0]["components"]
+                return {
+                    "State": comp.get("state", "Unavailable"),
+                    "City": comp.get("city", comp.get("town", "Unavailable")),
+                    "Postal": comp.get("postcode", "Unavailable")
+                }
+            return {"State": "Unavailable", "City": "Unavailable", "Postal": "Unavailable"}
+
+        elif provider == "Google Maps" and key:
+            url = f"https://maps.googleapis.com/maps/api/geocode/json?latlng={lat},{lon}&key={key}"
+            res = requests.get(url).json()
+            if res["results"]:
+                comps = res["results"][0]["address_components"]
+                state = city = postal = "Unavailable"
+                for c in comps:
+                    if "administrative_area_level_1" in c["types"]:
+                        state = c["long_name"]
+                    elif "locality" in c["types"]:
+                        city = c["long_name"]
+                    elif "postal_code" in c["types"]:
+                        postal = c["long_name"]
+                return {"State": state, "City": city, "Postal": postal}
+            return {"State": "Unavailable", "City": "Unavailable", "Postal": "Unavailable"}
+
+    except:
+        return {"State": "Unavailable", "City": "Unavailable", "Postal": "Unavailable"}
+
+
+# ============================================
+# MAIN PROCESSING
+# ============================================
+if uploaded_file:
     df = pd.read_excel(uploaded_file)
-    st.success(f"File uploaded successfully! Total rows: {len(df)}")
+    st.sidebar.markdown("### 🧭 Column Mapping")
 
-    # Detect date column
-    date_col = None
-    for col in df.columns:
-        if "date" in col.lower() or "time" in col.lower():
-            date_col = col
-            break
+    truck_col = st.sidebar.selectbox("Truck Column", df.columns)
+    lat_col = st.sidebar.selectbox("Latitude Column", df.columns)
+    lon_col = st.sidebar.selectbox("Longitude Column", df.columns)
+    date_col = st.sidebar.selectbox("Date Column", df.columns)
 
-    if date_col:
-        df[date_col] = pd.to_datetime(df[date_col], errors='coerce').dt.strftime('%m/%d/%Y')
+    st.info("Processing geocoding... please wait if many coordinates are present.")
 
-    # Detect lat/lon columns
-    lat_col = None
-    lon_col = None
-    for col in df.columns:
-        if "lat" in col.lower():
-            lat_col = col
-        if "lon" in col.lower():
-            lon_col = col
+    geo_data = df.apply(lambda r: geocode_location(r[lat_col], r[lon_col], api_option, api_key), axis=1)
+    geo_df = pd.DataFrame(list(geo_data))
+    df = pd.concat([df, geo_df], axis=1)
 
-    if lat_col and lon_col:
-        df = df[(df[lat_col].between(4, 14)) & (df[lon_col].between(2, 15))]
-        st.info(f"Filtered rows to Nigerian coordinates. Remaining: {len(df)}")
+    # Status and Last Report
+    df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
+    now = datetime.now()
+    df["Days_Since_Last_Report"] = (now - df.groupby(truck_col)[date_col].transform("max")).dt.days
+    df["Status"] = df["Days_Since_Last_Report"].apply(lambda d: "Reporting" if d <= 1 else "Not Reporting")
 
-        # Define reverse geocoding function
-        def reverse_geocode(lat, lon):
-            try:
-                url = f'https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lon}'
-                r = requests.get(url, timeout=10, headers={'User-Agent': 'GeoTracker/1.0'})
-                if r.status_code == 200:
-                    data = r.json()
-                    return data.get('display_name', 'Unknown')
-            except Exception:
-                pass
-            return "Unknown"
+    # ============================================
+    # FILTERING
+    # ============================================
+    st.sidebar.header("🔍 Filter Options")
+    unique_states = sorted(df["State"].unique())
+    selected_states = st.sidebar.multiselect("Filter by State", unique_states, default=unique_states)
+    df_filtered = df[df["State"].isin(selected_states)]
 
-        # Run geocoding
-        st.write("🔍 Starting reverse geocoding... please wait ⏳")
-        locations = []
-        progress = st.progress(0)
+    # ============================================
+    # SUMMARY & CHART
+    # ============================================
+    st.subheader("📊 Summary")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total Trucks", len(df))
+    c2.metric("Reporting", (df["Status"] == "Reporting").sum())
+    c3.metric("Not Reporting", (df["Status"] == "Not Reporting").sum())
 
-        for i, row in df.iterrows():
-            lat = row[lat_col]
-            lon = row[lon_col]
-            if pd.notnull(lat) and pd.notnull(lon):
-                address = reverse_geocode(lat, lon)
-                locations.append(address)
-            else:
-                locations.append("Invalid Coordinates")
+    st.markdown("### 🚚 Trucks by State")
+    counts = df_filtered["State"].value_counts().reset_index()
+    counts.columns = ["State", "Count"]
+    st.bar_chart(data=counts.set_index("State"))
 
-            if len(df) > 0:
-                progress.progress(int((i + 1) / len(df) * 100))
-            sleep(1)  # Respect API rate limit
+    # ============================================
+    # MAP VIEW (with Clustering)
+    # ============================================
+    st.markdown("---")
+    st.subheader("🗺️ Map View")
 
-        df['Location'] = locations
-        st.success("✅ Reverse geocoding completed!")
+    valid_coords = df_filtered.dropna(subset=[lat_col, lon_col])
+    if len(valid_coords) > 0:
+        avg_lat, avg_lon = valid_coords[lat_col].mean(), valid_coords[lon_col].mean()
+        m = folium.Map(location=[avg_lat, avg_lon], zoom_start=6, tiles="CartoDB positron")
 
-        # Download processed file
-        output = io.BytesIO()
-        df.to_excel(output, index=False)
-        output.seek(0)
+        marker_cluster = MarkerCluster().add_to(m)
 
-        st.download_button(
-            label="📥 Download Excel File",
-            data=output,
-            file_name="geocoded_results.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        def color(status):
+            return "green" if status == "Reporting" else "red"
 
-        st.dataframe(df.head(10))
+        for _, row in valid_coords.iterrows():
+            popup_html = f"""
+                <b>Truck:</b> {row[truck_col]}<br>
+                <b>State:</b> {row['State']}<br>
+                <b>City:</b> {row['City']}<br>
+                <b>Postal:</b> {row['Postal']}<br>
+                <b>Status:</b> {row['Status']}<br>
+                <b>Days Since Last Report:</b> {row['Days_Since_Last_Report']}
+            """
+            folium.CircleMarker(
+                [row[lat_col], row[lon_col]],
+                radius=6,
+                color=color(row["Status"]),
+                fill=True,
+                fill_color=color(row["Status"]),
+                popup=folium.Popup(popup_html, max_width=250)
+            ).add_to(marker_cluster)
+
+        st_folium(m, width=1000, height=550)
+        st.caption("🟢 Reporting | 🔴 Not Reporting | ⚪ Unavailable")
     else:
-        st.error("Could not find latitude or longitude columns in your file.")
+        st.warning("No coordinates available for map view.")
+
+    # ============================================
+    # EXPORT FILTERED DATA
+    # ============================================
+    st.markdown("---")
+    st.subheader("📁 Export Filtered Results")
+
+    buffer = BytesIO()
+    df_filtered.to_excel(buffer, index=False)
+    buffer.seek(0)
+    b64 = base64.b64encode(buffer.read()).decode()
+    href = f'<a href="data:application/octet-stream;base64,{b64}" download="Filtered_Vehicles.xlsx">📥 Download Filtered Excel</a>'
+    st.markdown(href, unsafe_allow_html=True)
+
 else:
-    st.info("Please upload an Excel file to start.")
+    st.info("👆 Upload an Excel file to begin.")
