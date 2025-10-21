@@ -77,35 +77,39 @@ if uploaded_file:
     # Map Display
     # ==============================
     if not df_valid.empty:
-        st.subheader("📍 Map View")
-        st.markdown("Hover over points to see full row data.")
-        map_df = df_valid.copy()
-        # Prepare hover text with all columns
-        hover_cols = df_valid.columns.tolist()
-        map_df['hover'] = map_df.apply(lambda x: '<br>'.join([f"{col}: {x[col]}" for col in hover_cols]), axis=1)
+    st.subheader("📍 Map View")
+    st.markdown("Hover over points to see full row data.")
+    map_df = df_valid.copy()
+    # Prepare hover text with all columns
+    hover_cols = df_valid.columns.tolist()
+    map_df['hover'] = map_df.apply(lambda x: '<br>'.join([f"{col}: {x[col]}" for col in hover_cols]), axis=1)
 
-        st.pydeck_chart(pdk.Deck(
-            map_style='mapbox://styles/mapbox/streets-v12',
-            initial_view_state=pdk.ViewState(
-                latitude=map_df[lat_col].mean(),
-                longitude=map_df[lon_col].mean(),
-                zoom=10,
-                pitch=0
-            ),
-            layers=[
-                pdk.Layer(
-                    'IconLayer',
-                    data=map_df,
-                    get_icon='{"url": "https://img.icons8.com/emoji/48/tanker-truck.png", "width": 128, "height": 128, "anchor": [64, 128]}',
-                    get_size=4,
-                    size_scale=15,
-                    get_position=[lon_col, lat_col],
-                    pickable=True
-                )
-            ],
-            tooltip={"html": "{hover}", "style": {"color": "white"}}
-        ))
-
+    st.pydeck_chart(pdk.Deck(
+        map_style='mapbox://styles/mapbox/streets-v12',
+        initial_view_state=pdk.ViewState(
+            latitude=map_df[lat_col].mean(),
+            longitude=map_df[lon_col].mean(),
+            zoom=10,
+            pitch=0
+        ),
+        layers=[
+            pdk.Layer(
+                'IconLayer',
+                data=map_df,
+                get_icon={
+                    "url": "https://img.icons8.com/emoji/48/tanker-truck.png",
+                    "width": 128,
+                    "height": 128,
+                    "anchor": [64, 128]
+                },
+                get_size=4,
+                size_scale=15,
+                get_position=[lon_col, lat_col],
+                pickable=True
+            )
+        ],
+        tooltip={"html": "{hover}", "style": {"color": "white"}}
+    ))
     # ==============================
     # Geocoding Option
     # ==============================
