@@ -162,10 +162,19 @@ if uploaded_file:
     # ==============================
     # Export geocoded/processed data
     # ==============================
-    export_buffer = BytesIO()
-    df_valid.to_excel(export_buffer, index=False, sheet_name="Processed Data")
-    export_buffer.seek(0)
-    st.download_button("📥 Download Processed Data", export_buffer, file_name=f"{generate_unique_filename()}.xlsx")
+    # Merge geocoding results into original df
+df_full = df.copy()
+geocode_cols = ['Street1','Street2','City','State','Postal Code','Country','Full Address','Geocoding Status']
+for col in geocode_cols:
+    df_full[col] = result_df[col]
 
-else:
-    st.info("👈 Please upload an Excel or CSV file to get started")
+# Filtered DataFrame based on status selection
+filtered_df = df_full[df_full['Geocoding Status'].isin(selected_status)]
+
+# Download buttons
+excel_buffer = BytesIO()
+with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+    filtered_df.to_excel(writer, index=False, sheet_name="Geocoded Data")
+excel_buffer.seek(0)
+st.download_button("📥 Download Filtered as Excel", excel_buffer, file_name=f"{generate_unique_filename()}.xlsx")
+st.download_button("📥 Download Filtered as CSV", filtered_df.to_csv(index=False), file_name=f"{generate_unique_filename()}.csv")
